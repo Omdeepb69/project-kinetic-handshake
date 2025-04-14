@@ -1,0 +1,63 @@
+```python
+import time
+# Although the project uses ursina, opencv-python, mediapipe, numpy,
+# only ursina and time are needed for this specific file's role
+# which is defining the model structure procedurally.
+from ursina import *
+# Note: numpy might be implicitly used by ursina, but not directly required here.
+# opencv-python and mediapipe are for webcam/gesture processing, not model definition.
+
+# --- Core Component: 3D Model Data (Procedurally Defined) ---
+# This class defines the drone's visual structure using Ursina primitives.
+# It's an alternative to loading an external file like 'drone_model.glb'.
+# If you have an actual 'drone_model.glb' file, you would load it in your
+# main script using: Entity(model='assets/drone_model.glb')
+# and you wouldn't need this class definition.
+
+class DroneModel(Entity):
+    """
+    Represents the drone's physical structure, composed of multiple Ursina Entities.
+    Includes body, arms, propellers, landing gear, and a sensor visual.
+    Provides methods for basic animations like spinning propellers.
+    """
+    def __init__(self, position=(0, 2, 0), rotation=(0, 0, 0), scale=0.5, **kwargs):
+        """
+        Initializes the drone model components.
+        Args:
+            position (tuple, optional): Initial world position. Defaults to (0, 2, 0).
+            rotation (tuple, optional): Initial world rotation. Defaults to (0, 0, 0).
+            scale (float, optional): Overall scale of the drone model. Defaults to 0.5.
+            **kwargs: Additional arguments passed to the parent Ursina Entity.
+        """
+        super().__init__(
+            position=position,
+            rotation=rotation,
+            scale=scale,
+            # Ensure the parent entity is enabled so children are visible by default
+            enabled=True,
+            **kwargs
+        )
+
+        # --- Drone Body ---
+        # The central part of the drone.
+        self.body = Entity(
+            model='cube', # Simple cube shape for the body
+            color=color.dark_gray,
+            scale=(1, 0.3, 1.5), # Rectangular prism shape (x, y, z)
+            collider='box', # Add a box collider for potential physics interactions
+            parent=self,    # Attach to the main DroneModel entity
+            name='drone_body' # Naming for easier identification
+        )
+
+        # --- Arms ---
+        # Arms extending from the body to hold the propellers.
+        arm_scale = (0.7, 0.1, 0.1) # Thin, long arms
+        arm_color = color.gray
+        arm_offset_x = 0.6 # How far the arms extend sideways
+        arm_offset_z = 0.85 # How far the arms extend forward/backward
+
+        # Create four arms and position them relative to the center
+        self.arm_fl = Entity(model='cube', color=arm_color, scale=arm_scale, position=(-arm_offset_x, 0, arm_offset_z), parent=self, name='arm_fl') # Front Left
+        self.arm_fr = Entity(model='cube', color=arm_color, scale=arm_scale, position=(arm_offset_x, 0, arm_offset_z), parent=self, name='arm_fr') # Front Right
+        self.arm_bl = Entity(model='cube', color=arm_color, scale=arm_scale, position=(-arm_offset_x, 0, -arm_offset_z), parent=self, name='arm_bl') # Back Left
+        self.arm_br = Entity(model='cube', color=arm_color, scale=arm_scale, position=(arm_offset_x, 0, -arm_offset_z), parent=self, name

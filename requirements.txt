@@ -1,0 +1,4 @@
+ursina
+opencv-python
+mediapipe
+numpy
