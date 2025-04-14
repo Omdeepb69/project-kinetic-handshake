@@ -1,11 +1,9 @@
-```python
 # drone_simulation.py
-# Defines the Ursina 3D drone entity for Project KINETIC HANDSHAKE.
+# Updated implementation to integrate with main.py and gesture_detector.py
 
 from ursina import *
-import sys
-import os
-import time # Required for time.dt
+import math
+import time
 
 # --- Constants ---
 GROUND_LEVEL = 0.1 # Minimum altitude the drone can reach safely
@@ -30,24 +28,22 @@ class Drone(Entity):
     """
     Represents the controllable drone in the Ursina simulation.
 
-    Handles model loading, visual components (propellers), movement logic,
+    Handles model creation, visual components (propellers), movement logic,
     and state management based on external commands received via control methods.
     Inherits from ursina.Entity.
     """
-    def __init__(self, position=(0, GROUND_LEVEL, 0), rotation=(0, 0, 0), model_path='assets/drone_model.glb'):
+    def __init__(self, position=(0, GROUND_LEVEL, 0), rotation=(0, 0, 0)):
         """
-        Initializes the Drone entity.
+        Initializes the Drone entity with a custom 3D model built from primitives.
 
         Args:
             position (tuple, optional): Initial position (x, y, z). Defaults to (0, GROUND_LEVEL, 0).
             rotation (tuple, optional): Initial rotation (x, y, z). Defaults to (0, 0, 0).
-            model_path (str, optional): Relative path to the drone's 3D model file.
-                                        Defaults to 'assets/drone_model.glb'.
         """
         super().__init__(
             position=position,
             rotation=rotation,
-            scale=0.3 # Adjust scale based on the imported model size
+            scale=1.0
         )
 
         # --- State Variables ---
@@ -55,77 +51,121 @@ class Drone(Entity):
         self.target_altitude = GROUND_LEVEL
         self.move_direction = Vec3(0, 0, 0) # Normalized horizontal movement direction
         self.target_rotation_y = self.rotation_y # Target yaw for smooth turning
+        self.vertical_direction = 0  # -1 for down, 0 for maintain, 1 for up
 
-        # --- Load Model ---
-        # Construct absolute path relative to this script file
-        script_dir = os.path.dirname(__file__)
-        model_full_path = os.path.abspath(os.path.join(script_dir, model_path))
+        # --- Create 3D Model ---
+        self.create_drone_model()
 
-        self.body = None
-        self.propellers = []
-
-        try:
-            if not os.path.exists(model_full_path):
-                raise FileNotFoundError(f"Model file not found at {model_full_path}")
-
-            # Load the main body model
-            # Note: Ursina might load .glb differently depending on its structure.
-            # If the model contains multiple meshes, they might load as children.
-            # We assume a single primary mesh or handle it generically.
-            self.body = Entity(
-                model=model_full_path,
-                # texture='white_cube', # Uncomment/change if model lacks textures/materials
+    def create_drone_model(self):
+        """Creates a detailed 3D drone model using Ursina primitives."""
+        # Create the main body (center) of the drone
+        self.body = Entity(
+            parent=self,
+            model='cube',
+            color=color.dark_gray,
+            scale=(0.5, 0.15, 0.5)
+        )
+        
+        # Create the arms of the drone
+        arm_length = 0.4
+        arm_width = 0.05
+        arm_positions = [
+            (arm_length/2, 0, arm_length/2),  # Front-Right
+            (arm_length/2, 0, -arm_length/2), # Back-Right
+            (-arm_length/2, 0, arm_length/2), # Front-Left
+            (-arm_length/2, 0, -arm_length/2) # Back-Left
+        ]
+        
+        # Create the four arms
+        self.arms = []
+        for i, pos in enumerate(arm_positions):
+            # Determine arm rotation angle
+            arm_angle = i * 90
+            
+            # Create the arm
+            arm = Entity(
                 parent=self,
-                # Collider choice: 'box' is faster, 'mesh' is more accurate but slower.
-                # Use 'mesh' if precise interaction with the model shape is needed.
-                collider='box'
+                model='cube',
+                color=color.gray,
+                position=pos,
+                scale=(arm_width, 0.05, arm_length if i % 2 == 0 else arm_width),
+                rotation_y=arm_angle if i % 2 else 0
             )
-            print(f"Drone model loaded successfully from: {model_full_path}")
-
-            # --- Setup Propellers ---
-            # Attempt to find children named like 'propeller', otherwise create defaults.
-            # This part is highly dependent on how the .glb file was exported.
-            found_propellers = [child for child in self.body.children if 'propeller' in child.name.lower()]
-
-            if found_propellers:
-                 self.propellers = found_propellers
-                 print(f"Found {len(self.propellers)} propeller parts in the model.")
-            else:
-                print("No named propeller parts found in model, creating default visual propellers.")
-                # Create simple visual placeholders if no propellers are found in the model hierarchy
-                # Adjust positions and scales based on your specific drone model structure
-                prop_positions = [
-                    Vec3(0.5, 0.1, 0.5), Vec3(-0.5, 0.1, 0.5), # Front right, front left
-                    Vec3(0.5, 0.1, -0.5), Vec3(-0.5, 0.1, -0.5) # Rear right, rear left
-                ]
-                for pos in prop_positions:
-                    prop = Entity(
-                        model='cylinder', # Simple cylinder shape
-                        color=color.dark_gray,
-                        scale=(0.25, 0.02, 0.25), # Diameter 0.25, height 0.02
-                        position=pos,
-                        parent=self.body # Parent propellers to the body
-                    )
-                    self.propellers.append(prop)
-
-        except FileNotFoundError as fnf_error:
-            print(f"ERROR: {fnf_error}", file=sys.stderr)
-            print("Ensure 'assets/drone_model.glb' exists relative to 'drone_simulation.py'.", file=sys.stderr)
-            self._create_fallback_drone()
-        except Exception as e:
-            print(f"ERROR: Failed to load or process drone model: {e}", file=sys.stderr)
-            print(f"Attempted path: {model_full_path}", file=sys.stderr)
-            self._create_fallback_drone()
-
-    def _create_fallback_drone(self):
-        """Creates a simple cube as a fallback if model loading fails."""
-        print("Creating fallback drone (blue cube).", file=sys.stderr)
-        if self.body: # Remove partially loaded body if it exists
-            destroy(self.body)
-        self.body = Entity(model='cube', color=color.blue, parent=self, scale=1.0, collider='box')
-        self.propellers = [] # No propellers for fallback
-        self.state = STATE_ERROR
-
+            self.arms.append(arm)
+        
+        # Create the propellers
+        self.propellers = []
+        propeller_positions = [
+            (arm_length, 0, arm_length),    # Front-Right
+            (arm_length, 0, -arm_length),   # Back-Right
+            (-arm_length, 0, arm_length),   # Front-Left
+            (-arm_length, 0, -arm_length)   # Back-Left
+        ]
+        
+        for i, pos in enumerate(propeller_positions):
+            # Alternate propeller colors for better visibility
+            propeller_color = color.red if i % 2 == 0 else color.blue
+            
+            # Create propeller motor (the center cylinder)
+            motor = Entity(
+                parent=self,
+                model='cylinder',
+                color=color.dark_gray,
+                position=pos,
+                scale=(0.1, 0.05, 0.1),
+                rotation_x=90
+            )
+            
+            # Create propeller blades
+            propeller = Entity(
+                parent=motor,
+                model='cube',
+                color=propeller_color,
+                position=(0, 0.05, 0),
+                scale=(0.3, 0.01, 0.05)
+            )
+            
+            # Add a perpendicular blade
+            propeller2 = Entity(
+                parent=motor,
+                model='cube',
+                color=propeller_color,
+                position=(0, 0.05, 0),
+                scale=(0.05, 0.01, 0.3)
+            )
+            
+            self.propellers.append((motor, propeller, propeller2))
+        
+        # Add some details to the body
+        self.camera = Entity(
+            parent=self.body,
+            model='sphere',
+            color=color.black,
+            scale=(0.2, 0.2, 0.2),
+            position=(0, -0.1, 0.25)
+        )
+        
+        # Add landing gear
+        leg_height = 0.2
+        for i in range(4):
+            x = 0.2 if i < 2 else -0.2
+            z = 0.2 if i % 2 == 0 else -0.2
+            
+            leg = Entity(
+                parent=self,
+                model='cube',
+                color=color.dark_gray,
+                position=(x, -leg_height/2, z),
+                scale=(0.05, leg_height, 0.05)
+            )
+            
+            foot = Entity(
+                parent=leg,
+                model='sphere',
+                color=color.gray,
+                position=(0, -leg_height/2, 0),
+                scale=(0.08, 0.08, 0.08)
+            )
 
     # --- Control Methods ---
 
@@ -135,6 +175,10 @@ class Drone(Entity):
             print("Drone command: Take Off")
             self.state = STATE_TAKING_OFF
             self.target_altitude = DEFAULT_HOVER_ALTITUDE
+
+    def takeoff(self):
+        """Alias for take_off() for API compatibility."""
+        self.take_off()
 
     def land(self):
         """Commands the drone to land at its current horizontal position."""
@@ -148,31 +192,67 @@ class Drone(Entity):
         """Commands the drone to stop horizontal movement and maintain altitude."""
         # Allow hovering from moving or even during takeoff/landing (will just maintain target alt)
         if self.state not in [STATE_LANDED, STATE_ERROR]:
-             if self.state == STATE_MOVING:
-                 print("Drone command: Hover")
-             self.state = STATE_HOVERING
-             self.move_direction = Vec3(0, 0, 0)
+            if self.state == STATE_MOVING:
+                print("Drone command: Hover")
+            self.state = STATE_HOVERING
+            self.move_direction = Vec3(0, 0, 0)
+            self.vertical_direction = 0  # Stop vertical movement
 
-    def move(self, direction: Vec3):
+    def move(self, direction, speed=0.5):
         """
-        Commands the drone to move in a specific horizontal direction.
-        The drone will attempt to maintain its current target altitude.
+        Commands the drone to move in a specific direction.
+        This version supports both Vec3 objects and string direction names.
 
         Args:
-            direction (Vec3): A vector indicating the desired horizontal movement (x, 0, z).
-                              Magnitude is ignored; only direction matters.
-                              Y component is ignored.
+            direction: Either a Vec3 object or a string ('forward', 'backward', 'left', 'right', 'up', 'down')
+            speed (float, optional): Movement speed factor. Defaults to 0.5.
         """
         if self.state not in [STATE_LANDED, STATE_LANDING, STATE_TAKING_OFF, STATE_ERROR]:
-            # Normalize the horizontal direction vector to ensure consistent speed
-            direction.y = 0
-            if direction.length_squared() > 0.001: # Check if direction is non-zero
-                self.move_direction = direction.normalized()
-                self.state = STATE_MOVING
-                # print(f"Drone command: Move towards {self.move_direction}") # Debug
-            else:
-                # If direction is zero vector, transition to hover
-                self.hover()
+            # Handle string direction inputs (from main.py)
+            if isinstance(direction, str):
+                if direction.lower() == 'forward':
+                    self.move_direction = Vec3(0, 0, 1).normalized() * speed
+                    self.state = STATE_MOVING
+                elif direction.lower() == 'backward':
+                    self.move_direction = Vec3(0, 0, -1).normalized() * speed
+                    self.state = STATE_MOVING
+                elif direction.lower() == 'left':
+                    self.move_direction = Vec3(-1, 0, 0).normalized() * speed
+                    self.state = STATE_MOVING
+                elif direction.lower() == 'right':
+                    self.move_direction = Vec3(1, 0, 0).normalized() * speed
+                    self.state = STATE_MOVING
+                elif direction.lower() == 'up':
+                    self.vertical_direction = 1
+                    self.target_altitude += VERTICAL_SPEED * speed
+                    self.target_altitude = max(GROUND_LEVEL, self.target_altitude)
+                elif direction.lower() == 'down':
+                    self.vertical_direction = -1
+                    self.target_altitude -= VERTICAL_SPEED * speed
+                    self.target_altitude = max(GROUND_LEVEL, self.target_altitude)
+            # Handle Vec3 direction inputs (from original drone_simulation.py)
+            elif isinstance(direction, Vec3):
+                direction.y = 0  # Ensure horizontal movement only
+                if direction.length_squared() > 0.001:  # Check if direction is non-zero
+                    self.move_direction = direction.normalized() * speed
+                    self.state = STATE_MOVING
+                else:
+                    # If direction is zero vector, transition to hover
+                    self.hover()
+
+    def rotate(self, direction, speed=1.0):
+        """
+        Commands the drone to rotate in place.
+
+        Args:
+            direction (str): Either 'cw' (clockwise) or 'ccw' (counter-clockwise).
+            speed (float, optional): Rotation speed factor. Defaults to 1.0.
+        """
+        if self.state not in [STATE_LANDED, STATE_LANDING, STATE_TAKING_OFF, STATE_ERROR]:
+            if direction.lower() == 'cw':
+                self.target_rotation_y = (self.rotation_y - 45 * speed) % 360
+            elif direction.lower() == 'ccw':
+                self.target_rotation_y = (self.rotation_y + 45 * speed) % 360
 
     def set_target_altitude(self, altitude: float):
         """
@@ -184,11 +264,12 @@ class Drone(Entity):
         """
         if self.state not in [STATE_LANDED, STATE_LANDING, STATE_ERROR]:
             self.target_altitude = max(GROUND_LEVEL, altitude) # Prevent setting target below ground
-            # print(f"Drone command: Set target altitude to {self.target_altitude:.2f}") # Debug
 
+    def update_drone(self):
+        """Legacy method for compatibility with main.py - calls update()"""
+        self.update()
 
     # --- Update Method ---
-
     def update(self):
         """
         Called automatically by Ursina each frame.
@@ -214,7 +295,7 @@ class Drone(Entity):
         # 2. Landing
         elif self.state == STATE_LANDING:
             if self.y > GROUND_LEVEL + 0.05:
-                 self.y = lerp(self.y, GROUND_LEVEL, LANDING_SPEED * SMOOTHING_FACTOR * dt / max(0.1, abs(GROUND_LEVEL - self.y))) # Approach ground
+                self.y = lerp(self.y, GROUND_LEVEL, LANDING_SPEED * SMOOTHING_FACTOR * dt / max(0.1, abs(GROUND_LEVEL - self.y))) # Approach ground
             else:
                 self.y = GROUND_LEVEL
                 self.state = STATE_LANDED
@@ -252,38 +333,34 @@ class Drone(Entity):
             # Keep current rotation target
             self.target_rotation_y = self.rotation_y
 
-
         # --- Apply Smooth Rotation (Yaw) ---
         if self.state not in [STATE_LANDED, STATE_LANDING]:
-             # Use shortest angle interpolation for yaw
-             current_rot = self.rotation_y
-             delta_rot = (self.target_rotation_y - current_rot + 180) % 360 - 180
-             self.rotation_y = lerp(current_rot, current_rot + delta_rot, ROTATION_SPEED_DRONE * SMOOTHING_FACTOR * dt / max(1.0, abs(delta_rot)))
-
+            # Use shortest angle interpolation for yaw
+            current_rot = self.rotation_y
+            delta_rot = (self.target_rotation_y - current_rot + 180) % 360 - 180
+            self.rotation_y = lerp(current_rot, current_rot + delta_rot, ROTATION_SPEED_DRONE * SMOOTHING_FACTOR * dt / max(1.0, abs(delta_rot)))
 
         # --- Propeller Animation ---
         if self.state != STATE_LANDED:
             # Rotate propellers faster if moving/taking off/landing, slower if hovering
             speed_factor = 1.5 if self.state in [STATE_MOVING, STATE_TAKING_OFF, STATE_LANDING] else 1.0
-            for prop in self.propellers:
-                prop.rotation_y += ROTATION_SPEED_PROPELLERS * speed_factor * dt
+            for motor, _, _ in self.propellers:
+                motor.rotation_y += ROTATION_SPEED_PROPELLERS * speed_factor * dt
 
         # --- Ground Constraint ---
         # Ensure drone doesn't visually clip through the ground unexpectedly
         if self.y < GROUND_LEVEL and self.state != STATE_LANDING:
-             self.y = GROUND_LEVEL
-             # If somehow below ground while not landing, force landing state
-             if self.state != STATE_LANDED:
-                 print("WARN: Drone below ground level unexpectedly. Forcing landing.")
-                 self.land()
+            self.y = GROUND_LEVEL
+            # If somehow below ground while not landing, force landing state
+            if self.state != STATE_LANDED:
+                print("WARN: Drone below ground level unexpectedly. Forcing landing.")
+                self.land()
 
 
 # --- Example Usage (for testing this file directly) ---
 if __name__ == '__main__':
     # This block allows testing the Drone class independently.
-    # In the actual project, the Ursina app and drone instantiation
-    # will happen in 'main.py'.
-    from ursina import Ursina, Sky, EditorCamera, Grid, dedent
+    from ursina import Ursina, Sky, EditorCamera, Grid, Text, dedent
 
     app = Ursina(title='Drone Simulation Test')
 
@@ -297,7 +374,7 @@ if __name__ == '__main__':
 
     # Simple keyboard controls for testing drone methods
     info_text = Text(origin=(-.5, .5), scale=1.0, color=color.black,
-                     text=dedent("""
+                    text=dedent("""
                         Controls:
                         Space: Take Off / Land
                         W/A/S/D: Move Horizontally
@@ -306,7 +383,7 @@ if __name__ == '__main__':
                         Q: Stop Horizontal Movement (Hover)
                         Mouse Drag: Rotate Camera
                         Scroll Wheel: Zoom Camera
-                     """).strip())
+                    """).strip())
 
     def input(key):
         if drone.state == STATE_ERROR:
@@ -319,26 +396,26 @@ if __name__ == '__main__':
             elif drone.state != STATE_LANDING: # Prevent landing command spam
                 drone.land()
         elif key == 'w':
-            drone.move(Vec3(0, 0, 1)) # Forward
+            drone.move('forward') # Forward
         elif key == 's':
-            drone.move(Vec3(0, 0, -1)) # Backward
+            drone.move('backward') # Backward
         elif key == 'a':
-            drone.move(Vec3(-1, 0, 0)) # Left
+            drone.move('left') # Left
         elif key == 'd':
-            drone.move(Vec3(1, 0, 0)) # Right
+            drone.move('right') # Right
         elif key == 'r': # Increase altitude target
-            drone.set_target_altitude(drone.target_altitude + 1)
+            drone.move('up')
         elif key == 'f': # Decrease altitude target
-            drone.set_target_altitude(drone.target_altitude - 1)
+            drone.move('down')
         elif key == 'q': # Explicit hover command
             drone.hover()
 
     # In a real application, gesture input would call drone.move(), drone.hover(), etc.
     # This basic key release check simulates stopping movement.
     def update():
-         # Check if any movement key is NOT held down while the drone is moving
-         if drone.state == STATE_MOVING and not any(held_keys[k] for k in ['w', 'a', 's', 'd']):
-             drone.hover() # Command hover if no movement keys are pressed
+        # Check if any movement key is NOT held down while the drone is moving
+        if drone.state == STATE_MOVING and not any(held_keys[k] for k in ['w', 'a', 's', 'd']):
+            drone.hover() # Command hover if no movement keys are pressed
 
     # Use EditorCamera for easy navigation during testing
     editor_camera = EditorCamera(
@@ -346,4 +423,5 @@ if __name__ == '__main__':
         distance=15,            # Initial distance from origin
         target=drone           # Make camera focus on the drone
     )
-    # Allow camera to follow the drone
+
+    app.run()
